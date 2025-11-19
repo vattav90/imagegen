@@ -1,109 +1,101 @@
 from flask import Flask, send_file, request
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import io
-import math
 
 app = Flask(__name__)
 
-# --- Constants for Max Values ---
+# --- Constants ---
 MAX_POINTS = 14000
 MAX_NIGHTS = 60
-# --------------------------------
-
-def draw_progress_arch(draw, center_x, center_y, radius, progress_percent, line_width, color):
-    """Draws a progress arc from 180 degrees down to 0 degrees based on percentage."""
-    
-    # Angles for the semi-circle
-    FULL_ARCH_START = 180
-    FULL_ARCH_END = 0
-    total_degrees = FULL_ARCH_START - FULL_ARCH_END 
-    
-    # Calculate the angle where the progress stops
-    progress_degrees = total_degrees * progress_percent
-    current_end_angle = FULL_ARCH_START - progress_degrees
-    
-    # Bounding box for the arc
-    bbox = [center_x - radius, center_y - radius, center_x + radius, center_y + radius]
-    
-    # Draw the progress arc
-    draw.arc(
-        bbox, 
-        start=current_end_angle, 
-        end=FULL_ARCH_START,
-        fill=color, 
-        width=line_width
-    )
 
 def generate_status_image(points, nights):
-    WIDTH, HEIGHT = 400, 200
-    # Use 'RGBA' for transparency
-    img = Image.new('RGBA', (WIDTH, HEIGHT), (255, 255, 255, 0))
+    """
+    Generates the progress bar image based on current points and nights.
+    """
+    WIDTH, HEIGHT = 400, 220  # Slightly taller to accommodate stroke width
+    
+    # 1. Setup Image with Beige Background (Matches your design)
+    # Use 'RGBA' and color (226, 192, 156) for the beige look, or 'white'
+    img = Image.new('RGBA', (WIDTH, HEIGHT), (226, 192, 156, 255)) 
     draw = ImageDraw.Draw(img)
     
-    # Calculate Progress (clamped 0 to 1)
+    # 2. Calculate Progress (clamped 0 to 1)
     points_progress = min(1.0, max(0.0, points / MAX_POINTS))
     nights_progress = min(1.0, max(0.0, nights / MAX_NIGHTS))
 
-    # Parameters
+    # 3. Geometry Parameters
+    # Center at the bottom middle
     CENTER_X = WIDTH // 2
-    CENTER_Y = HEIGHT 
-    LINE_WIDTH = 15
-    FULL_ARCH_START = 180 
-    FULL_ARCH_END = 0
+    CENTER_Y = HEIGHT - 20 
     
-    # Colors (Confirmed as valid RGB tuples)
-    TEAL_FG = (45, 228, 216)    # Bright Teal for progress
-    TEAL_BG = (230, 242, 245)    # Faded Teal for background
-    INDIGO_FG = (72, 94, 234)   # Bright Indigo for progress
-    INDIGO_BG = (227, 230, 238)  # Faded Indigo for background
-    
-    RADIUS_OUTER = 170 
-    RADIUS_INNER = 130 
+    # Radii
+    RADIUS_OUTER = 160 
+    RADIUS_INNER = 120 
+    LINE_WIDTH = 18
 
-    # --- 1. Draw Background Arches (Full Semicircles) ---
-    # These should be visible even if progress is 0.
+    # 4. Draw Background Arches (Top Semicircle: 180 to 0)
+    # Pillow angles: 180=Left, 270=Top, 0=Right (Clockwise)
     
-    # Outer (Points) Background
-    draw.arc([CENTER_X - RADIUS_OUTER, CENTER_Y - RADIUS_OUTER, CENTER_X + RADIUS_OUTER, CENTER_Y + RADIUS_OUTER],
-             start=FULL_ARCH_END, end=FULL_ARCH_START, fill=TEAL_BG, width=LINE_WIDTH)
+    TEAL_BG = (230, 242, 245)
+    INDIGO_BG = (227, 230, 238)
+    
+    # Draw Outer Background (Teal) - Start 180, End 0
+    draw.arc(
+        [CENTER_X - RADIUS_OUTER, CENTER_Y - RADIUS_OUTER, CENTER_X + RADIUS_OUTER, CENTER_Y + RADIUS_OUTER],
+        start=180, end=0, fill=TEAL_BG, width=LINE_WIDTH
+    )
 
-    # Inner (Nights) Background
-    draw.arc([CENTER_X - RADIUS_INNER, CENTER_Y - RADIUS_INNER, CENTER_X + RADIUS_INNER, CENTER_Y + RADIUS_INNER],
-             start=FULL_ARCH_END, end=FULL_ARCH_START, fill=INDIGO_BG, width=LINE_WIDTH)
+    # Draw Inner Background (Indigo) - Start 180, End 0
+    draw.arc(
+        [CENTER_X - RADIUS_INNER, CENTER_Y - RADIUS_INNER, CENTER_X + RADIUS_INNER, CENTER_Y + RADIUS_INNER],
+        start=180, end=0, fill=INDIGO_BG, width=LINE_WIDTH
+    )
              
-    # --- 2. Draw Progress Arches (Dynamic) ---
-    # These will draw the bright color ON TOP of the faded background.
+    # 5. Draw Progress Arches (Dynamic)
+    # We draw from 180 (Left) upwards to the right
     
-    # Outer (Points) Progress (Teal)
-    draw_progress_arch(draw, CENTER_X, CENTER_Y, RADIUS_OUTER, points_progress, LINE_WIDTH, TEAL_FG)
+    TEAL_FG = (45, 228, 216)
+    INDIGO_FG = (72, 94, 234)
     
-    # Inner (Nights) Progress (Indigo)
-    draw_progress_arch(draw, CENTER_X, CENTER_Y, RADIUS_INNER, nights_progress, LINE_WIDTH, INDIGO_FG)
+    # Calculate end angles based on progress
+    # 180 is start. Full sweep is 180 degrees.
+    points_end_angle = 180 + (180 * points_progress)
+    nights_end_angle = 180 + (180 * nights_progress)
+    
+    # Draw Outer Progress
+    if points_progress > 0:
+        draw.arc(
+            [CENTER_X - RADIUS_OUTER, CENTER_Y - RADIUS_OUTER, CENTER_X + RADIUS_OUTER, CENTER_Y + RADIUS_OUTER],
+            start=180, end=points_end_angle, fill=TEAL_FG, width=LINE_WIDTH
+        )
+    
+    # Draw Inner Progress
+    if nights_progress > 0:
+        draw.arc(
+            [CENTER_X - RADIUS_INNER, CENTER_Y - RADIUS_INNER, CENTER_X + RADIUS_INNER, CENTER_Y + RADIUS_INNER],
+            start=180, end=nights_end_angle, fill=INDIGO_FG, width=LINE_WIDTH
+        )
 
-    # Return image as a byte stream
+    # Return image
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format='PNG')
     img_byte_arr.seek(0)
-    
     return img_byte_arr
+
 
 @app.route('/generate-progress-image', methods=['GET'])
 def serve_dynamic_image():
-    # Attempt to get 'points' and 'nights' from the query parameters
     try:
+        # Get params, default to 0 if missing
         current_points = int(request.args.get('points', 0))
         current_nights = int(request.args.get('nights', 0))
     except ValueError:
-        # Handle case where inputs are not valid integers
         current_points = 0
         current_nights = 0
         
     image_stream = generate_status_image(current_points, current_nights)
-    
-    # Return the generated PNG file
     return send_file(image_stream, mimetype='image/png')
 
 
 if __name__ == '__main__':
-    # Use a secure, production-ready server (like Gunicorn/uWSGI) for actual deployment
     app.run(debug=True)
