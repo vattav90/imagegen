@@ -10,26 +10,25 @@ app = Flask(__name__)
 MAX_POINTS = 14000
 MAX_NIGHTS = 60
 
-# --- ASSETS (Replace these with your real URLs) ---
-# 1. The Card Image to be pasted inside the arc
-CARD_IMAGE_URL = "https://i.imgur.com/8Y9f14r.png" # Placeholder Credit Card
-# 2. A Font file (Google Fonts URL) to render the text nicely
+# --- ASSETS (Replace with your real URLs) ---
+CARD_IMAGE_URL = "https://i.imgur.com/8Y9f14r.png" 
 FONT_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Bold.ttf"
 
 def load_font(size):
-    """Downloads and loads a font from a URL."""
     try:
-        response = requests.get(FONT_URL)
+        response = requests.get(FONT_URL, timeout=5)
         return ImageFont.truetype(io.BytesIO(response.content), size)
     except:
         return ImageFont.load_default()
 
 def load_image_from_url(url):
     try:
-        response = requests.get(url, stream=True)
-        response.raw.decode_content = True
+        # Added timeout to prevent hanging
+        response = requests.get(url, stream=True, timeout=5)
+        response.raise_for_status()
         return Image.open(response.raw).convert("RGBA")
-    except:
+    except Exception as e:
+        print(f"Failed to load image: {e}")
         return None
 
 def draw_capped_arc(draw, cx, cy, radius, start_angle, end_angle, width, color):
@@ -59,13 +58,13 @@ def generate_status_image(points, nights):
     WIDTH = TARGET_WIDTH * SCALE_FACTOR
     HEIGHT = TARGET_HEIGHT * SCALE_FACTOR
     
-    # Transparent Background (R, G, B, Alpha=0)
+    # Transparent Background
     img = Image.new('RGBA', (WIDTH, HEIGHT), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
     # --- 2. Geometry & Colors ---
     CENTER_X = WIDTH // 2
-    CENTER_Y = HEIGHT - (20 * SCALE_FACTOR) # Bottom of the arc
+    CENTER_Y = HEIGHT - (20 * SCALE_FACTOR) 
     
     RADIUS_OUTER = 250 * SCALE_FACTOR
     RADIUS_INNER = 190 * SCALE_FACTOR
@@ -94,21 +93,26 @@ def generate_status_image(points, nights):
 
     # --- 5. Paste Card Image ---
     card_img = load_image_from_url(CARD_IMAGE_URL)
+    card_target_width = 160 * SCALE_FACTOR
+    
+    # FIX: Initialize card_y with a default value so code doesn't crash if image fails
+    # We assume a standard card ratio (approx 0.63 height/width) for the default
+    default_card_height = int(card_target_width * 0.63)
+    card_y = CENTER_Y - default_card_height - (10 * SCALE_FACTOR)
+
     if card_img:
         # Resize card to fit nicely inside the inner arc
-        # Approx 160px wide in target size -> 160 * 8 in scaled size
-        card_target_width = 160 * SCALE_FACTOR
         aspect_ratio = card_img.height / card_img.width
         card_target_height = int(card_target_width * aspect_ratio)
         
         card_img = card_img.resize((card_target_width, card_target_height), resample=Image.LANCZOS)
         
         # Calculate position to center it inside the arc
-        # Move it up from the bottom center
         card_x = CENTER_X - (card_target_width // 2)
-        card_y = CENTER_Y - card_target_height - (10 * SCALE_FACTOR) # 10px padding from bottom
         
-        # Paste (use card_img as mask for transparency)
+        # UPDATE card_y with the REAL image height
+        card_y = CENTER_Y - card_target_height - (10 * SCALE_FACTOR) 
+        
         img.paste(card_img, (card_x, card_y), card_img)
 
     # --- 6. Draw Text "To achieve Platinum Status" ---
@@ -117,17 +121,16 @@ def generate_status_image(points, nights):
     
     text = "To achieve Platinum Status"
     
-    # Get text size to center it
+    # Get text size
     left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
     text_width = right - left
     text_height = bottom - top
     
-    # Position text above the card
+    # Position text above the card (using the safe card_y)
     text_x = CENTER_X - (text_width // 2)
-    text_y = card_y - text_height - (20 * SCALE_FACTOR) # 20px padding above card
+    text_y = card_y - text_height - (20 * SCALE_FACTOR)
     
-    # Text Color (White to contrast on the background, or Dark Gray)
-    # Since this sits on the beige background, White looks best.
+    # Draw Text (White)
     draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
 
     # --- 7. Resize & Output ---
