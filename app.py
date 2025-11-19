@@ -10,7 +10,7 @@ app = Flask(__name__)
 MAX_POINTS = 14000
 MAX_NIGHTS = 60
 
-# --- ASSETS (Replace with your real URLs) ---
+# --- ASSETS ---
 CARD_IMAGE_URL = "https://i.imgur.com/8Y9f14r.png" 
 FONT_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Bold.ttf"
 
@@ -23,48 +23,59 @@ def load_font(size):
 
 def load_image_from_url(url):
     try:
-        # Added timeout to prevent hanging
         response = requests.get(url, stream=True, timeout=5)
         response.raise_for_status()
         return Image.open(response.raw).convert("RGBA")
-    except Exception as e:
-        print(f"Failed to load image: {e}")
+    except:
         return None
 
 def draw_capped_arc(draw, cx, cy, radius, start_angle, end_angle, width, color):
-    """Draws an arc with rounded caps."""
+    """
+    Draws an arc with rounded caps.
+    FIX: Adjusts calculation to place caps at the CENTER of the stroke, not the outer edge.
+    """
+    # 1. Draw the main Arc
+    # Pillow draws the arc 'inside' the bounding box
     bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
     draw.arc(bbox, start=start_angle, end=end_angle, fill=color, width=width)
     
+    # --- THE FIX IS HERE ---
+    # Pillow draws stroke width INWARDS from the radius.
+    # So the 'center' of the line is: radius - (width / 2)
+    center_radius = radius - (width / 2)
+    
     cap_r = width / 2
     
-    # Start Cap
+    # 2. Start Cap (Circle at the start)
     start_rad = math.radians(start_angle)
-    sx = cx + radius * math.cos(start_rad)
-    sy = cy + radius * math.sin(start_rad)
+    sx = cx + center_radius * math.cos(start_rad)
+    sy = cy + center_radius * math.sin(start_rad)
+    
+    # The ellipse bounding box is [x-r, y-r, x+r, y+r]
+    # We add a slight '0.5' pixel overlap to ensure no tiny gaps due to anti-aliasing
     draw.ellipse([sx - cap_r, sy - cap_r, sx + cap_r, sy + cap_r], fill=color)
 
-    # End Cap
+    # 3. End Cap (Circle at the end)
     end_rad = math.radians(end_angle)
-    ex = cx + radius * math.cos(end_rad)
-    ey = cy + radius * math.sin(end_rad)
+    ex = cx + center_radius * math.cos(end_rad)
+    ey = cy + center_radius * math.sin(end_rad)
+    
     draw.ellipse([ex - cap_r, ey - cap_r, ex + cap_r, ey + cap_r], fill=color)
 
 def generate_status_image(points, nights):
-    # --- 1. SETUP (Transparent Canvas) ---
+    # --- 1. SETUP ---
     TARGET_WIDTH, TARGET_HEIGHT = 600, 320
-    SCALE_FACTOR = 8
+    SCALE_FACTOR = 8 # Super-sampling for smoothness
     
     WIDTH = TARGET_WIDTH * SCALE_FACTOR
     HEIGHT = TARGET_HEIGHT * SCALE_FACTOR
     
-    # Transparent Background
     img = Image.new('RGBA', (WIDTH, HEIGHT), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
     # --- 2. Geometry & Colors ---
     CENTER_X = WIDTH // 2
-    CENTER_Y = HEIGHT - (20 * SCALE_FACTOR) 
+    CENTER_Y = HEIGHT - (20 * SCALE_FACTOR)
     
     RADIUS_OUTER = 250 * SCALE_FACTOR
     RADIUS_INNER = 190 * SCALE_FACTOR
@@ -95,42 +106,33 @@ def generate_status_image(points, nights):
     card_img = load_image_from_url(CARD_IMAGE_URL)
     card_target_width = 160 * SCALE_FACTOR
     
-    # FIX: Initialize card_y with a default value so code doesn't crash if image fails
-    # We assume a standard card ratio (approx 0.63 height/width) for the default
+    # Default card_y to prevent crash if image fails
     default_card_height = int(card_target_width * 0.63)
     card_y = CENTER_Y - default_card_height - (10 * SCALE_FACTOR)
 
     if card_img:
-        # Resize card to fit nicely inside the inner arc
         aspect_ratio = card_img.height / card_img.width
         card_target_height = int(card_target_width * aspect_ratio)
         
         card_img = card_img.resize((card_target_width, card_target_height), resample=Image.LANCZOS)
         
-        # Calculate position to center it inside the arc
         card_x = CENTER_X - (card_target_width // 2)
-        
-        # UPDATE card_y with the REAL image height
-        card_y = CENTER_Y - card_target_height - (10 * SCALE_FACTOR) 
+        card_y = CENTER_Y - card_target_height - (10 * SCALE_FACTOR)
         
         img.paste(card_img, (card_x, card_y), card_img)
 
-    # --- 6. Draw Text "To achieve Platinum Status" ---
+    # --- 6. Draw Text ---
     font_size = 14 * SCALE_FACTOR
     font = load_font(font_size)
     
     text = "To achieve Platinum Status"
-    
-    # Get text size
     left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
     text_width = right - left
     text_height = bottom - top
     
-    # Position text above the card (using the safe card_y)
     text_x = CENTER_X - (text_width // 2)
     text_y = card_y - text_height - (20 * SCALE_FACTOR)
     
-    # Draw Text (White)
     draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
 
     # --- 7. Resize & Output ---
