@@ -35,14 +35,12 @@ def draw_progress_arch(draw, center_x, center_y, radius, progress_percent, line_
     )
 
 def generate_status_image(points, nights):
-    """
-    Generates the progress bar image based on current points and nights.
-    """
     WIDTH, HEIGHT = 400, 200
+    # Use 'RGBA' for transparency
     img = Image.new('RGBA', (WIDTH, HEIGHT), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # 1. Calculate Progress (clamped 0 to 1)
+    # Calculate Progress (clamped 0 to 1)
     points_progress = min(1.0, max(0.0, points / MAX_POINTS))
     nights_progress = min(1.0, max(0.0, nights / MAX_NIGHTS))
 
@@ -53,23 +51,33 @@ def generate_status_image(points, nights):
     FULL_ARCH_START = 180 
     FULL_ARCH_END = 0
     
-    # Colors
-    TEAL_FG = (45, 228, 216)
-    TEAL_BG = (230, 242, 245)
-    INDIGO_FG = (72, 94, 234)
-    INDIGO_BG = (227, 230, 238)
+    # Colors (Confirmed as valid RGB tuples)
+    TEAL_FG = (45, 228, 216)    # Bright Teal for progress
+    TEAL_BG = (230, 242, 245)    # Faded Teal for background
+    INDIGO_FG = (72, 94, 234)   # Bright Indigo for progress
+    INDIGO_BG = (227, 230, 238)  # Faded Indigo for background
     
     RADIUS_OUTER = 170 
     RADIUS_INNER = 130 
 
-    # 2. Draw Background Arches
+    # --- 1. Draw Background Arches (Full Semicircles) ---
+    # These should be visible even if progress is 0.
+    
+    # Outer (Points) Background
     draw.arc([CENTER_X - RADIUS_OUTER, CENTER_Y - RADIUS_OUTER, CENTER_X + RADIUS_OUTER, CENTER_Y + RADIUS_OUTER],
              start=FULL_ARCH_END, end=FULL_ARCH_START, fill=TEAL_BG, width=LINE_WIDTH)
+
+    # Inner (Nights) Background
     draw.arc([CENTER_X - RADIUS_INNER, CENTER_Y - RADIUS_INNER, CENTER_X + RADIUS_INNER, CENTER_Y + RADIUS_INNER],
              start=FULL_ARCH_END, end=FULL_ARCH_START, fill=INDIGO_BG, width=LINE_WIDTH)
              
-    # 3. Draw Progress Arches
+    # --- 2. Draw Progress Arches (Dynamic) ---
+    # These will draw the bright color ON TOP of the faded background.
+    
+    # Outer (Points) Progress (Teal)
     draw_progress_arch(draw, CENTER_X, CENTER_Y, RADIUS_OUTER, points_progress, LINE_WIDTH, TEAL_FG)
+    
+    # Inner (Nights) Progress (Indigo)
     draw_progress_arch(draw, CENTER_X, CENTER_Y, RADIUS_INNER, nights_progress, LINE_WIDTH, INDIGO_FG)
 
     # Return image as a byte stream
@@ -78,7 +86,6 @@ def generate_status_image(points, nights):
     img_byte_arr.seek(0)
     
     return img_byte_arr
-
 
 @app.route('/generate-progress-image', methods=['GET'])
 def serve_dynamic_image():
