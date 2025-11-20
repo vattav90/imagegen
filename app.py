@@ -71,8 +71,8 @@ def get_tier_assets(tier):
     t = tier.lower().strip()
     
     # Default fallback
-    next_tier = "Platinum"
-    card_file = "card.png"
+    next_tier = "Diamond"
+    card_file = "card_diamond.png"
     
     if t == "classic":
         next_tier = "Silver"
@@ -94,7 +94,7 @@ def generate_status_image(tier, reward_points, discount_val, status_points, nigh
     TARGET_WIDTH = 600
     SCALE_FACTOR = 8 
     
-    bg_filename = "bg.png"
+    bg_filename = "bg3.png"
     target_height = 400 
     
     if os.path.exists(bg_filename):
@@ -109,7 +109,7 @@ def generate_status_image(tier, reward_points, discount_val, status_points, nigh
     WIDTH = TARGET_WIDTH * SCALE_FACTOR
     HEIGHT = TARGET_HEIGHT * SCALE_FACTOR
     
-    bg_img = load_local_image("bg.png", (WIDTH, HEIGHT))
+    bg_img = load_local_image("bg3.png", (WIDTH, HEIGHT))
     if not bg_img:
         bg_img = Image.new('RGBA', (WIDTH, HEIGHT), (226, 192, 156, 255))
 
@@ -383,10 +383,10 @@ def generate_status_image(tier, reward_points, discount_val, status_points, nigh
         p_data = str(status_points)
 
     p_label = f"/ {MAX_POINTS:,} Status points"
-    row_h = draw_stats_row(start_stats_y, p_data, p_label, icon_p_small)
+    row_h = draw_stats_row(1.05*start_stats_y, p_data, p_label, icon_p_small)
     
     # Draw Nights Row (Using 'nights')
-    n_y = start_stats_y + 1.5*row_h + (10 * SCALE_FACTOR)
+    n_y = start_stats_y + 2.8*row_h + (10 * SCALE_FACTOR)
     n_data = f"{nights}"
     n_label = f"/ {MAX_NIGHTS} nights"
     draw_stats_row(n_y, n_data, n_label, icon_n_small)
