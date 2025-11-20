@@ -1,5 +1,5 @@
 from flask import Flask, send_file, request
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageColor
 import io
 import math
 import os
@@ -7,6 +7,8 @@ import os
 app = Flask(__name__)
 
 # --- Constants ---
+# Note: In a full production app, these MAX values usually change based on the tier.
+# For now, we keep them fixed or you can make them dynamic inputs as well.
 MAX_POINTS = 14000
 MAX_NIGHTS = 60
 
@@ -27,6 +29,7 @@ def load_local_image(filename, target_size=None, quality=Image.LANCZOS):
     """Loads an image from the local file system."""
     try:
         if not os.path.exists(filename):
+            # print(f"Debug: {filename} not found.") # Uncomment for debugging
             return None
         img = Image.open(filename).convert("RGBA")
         if target_size:
@@ -56,12 +59,41 @@ def draw_capped_arc(draw, cx, cy, radius, start_angle, end_angle, width, color):
     ey = cy + center_radius * math.sin(end_rad)
     draw.ellipse([ex - cap_r, ey - cap_r, ex + cap_r, ey + cap_r], fill=color)
 
-def generate_status_image(points, nights):
+def get_tier_assets(tier):
+    """
+    Returns (next_tier_name, card_filename) based on the CURRENT tier.
+    Mapping based on user request:
+    Classic -> Silver Card
+    Silver -> Gold Card
+    Gold -> Platinum Card
+    Platinum -> Diamond Card
+    """
+    t = tier.lower().strip()
+    
+    # Default fallback
+    next_tier = "Platinum"
+    card_file = "card.png"
+    
+    if t == "classic":
+        next_tier = "Silver"
+        card_file = "card_silver.png" # Corresponds to silver.svg
+    elif t == "silver":
+        next_tier = "Gold"
+        card_file = "card_gold.png"   # Corresponds to gold.svg
+    elif t == "gold":
+        next_tier = "Platinum"
+        card_file = "card_platinum.png" # Corresponds to platinum.svg
+    elif t == "platinum":
+        next_tier = "Diamond"
+        card_file = "card_diamond.png"  # Corresponds to diamond.svg
+        
+    return next_tier, card_file
+
+def generate_status_image(tier, reward_points, discount_val, status_points, nights):
     # --- 1. SETUP CANVAS ---
     TARGET_WIDTH = 600
     SCALE_FACTOR = 8 
     
-    # Detect background aspect ratio
     bg_filename = "bg.png"
     target_height = 400 
     
@@ -71,7 +103,6 @@ def generate_status_image(points, nights):
                 aspect_ratio = temp_bg.height / temp_bg.width
                 target_height = int(TARGET_WIDTH * aspect_ratio)
         except Exception as e:
-            print(f"Error reading background dimensions: {e}")
             target_height = 400
 
     TARGET_HEIGHT = target_height
@@ -81,41 +112,58 @@ def generate_status_image(points, nights):
     bg_img = load_local_image("bg.png", (WIDTH, HEIGHT))
     if not bg_img:
         bg_img = Image.new('RGBA', (WIDTH, HEIGHT), (226, 192, 156, 255))
+
+    # --- 1.5 APPLY TIER MASKING ---
+    # Mask colors based on current tier
+    tier_colors = {
+        "classic": "#050033",
+        "silver": "#76777A",
+        "gold": "#AF913A",
+        "platinum": "#394049",
+        "diamond": "#BABABA"
+    }
+    
+    t_key = tier.lower().strip()
+    hex_color = tier_colors.get(t_key, "#AF913A") # Default to Gold color if unknown
+    
+    # Convert hex to RGB
+    rgb_color = ImageColor.getrgb(hex_color)
+    
+    # Create a solid color layer with 40% opacity (255 * 0.40 ≈ 102)
+    mask_alpha = 102
+    mask_color = rgb_color + (mask_alpha,)
+    
+    mask_layer = Image.new('RGBA', bg_img.size, mask_color)
+    
+    # Composite the mask over the background
+    # This tints the background with the tier color
+    bg_img = Image.alpha_composite(bg_img, mask_layer)
         
     img = bg_img.copy()
     draw = ImageDraw.Draw(img)
     
     # --- 2. FONT LOADING & HELPERS ---
-
-    # HELPER: Draw text with optional spacing
     def draw_bold_text(xy, text, font, fill="white", strength=1.0, letter_spacing=0):
         stroke_w = int(strength * SCALE_FACTOR)
         x, y = xy
         
         if letter_spacing == 0:
-            # Standard drawing (faster, better kerning)
             draw.text(xy, text, font=font, fill=fill, stroke_width=stroke_w, stroke_fill=fill)
         else:
-            # Manual drawing character by character
             for char in text:
                 draw.text((x, y), char, font=font, fill=fill, stroke_width=stroke_w, stroke_fill=fill)
-                # Advance cursor by char width + spacing
                 try:
                     char_width = font.getlength(char)
                 except AttributeError:
                     bbox = draw.textbbox((0,0), char, font=font)
                     char_width = bbox[2] - bbox[0]
-                
                 x += char_width + letter_spacing
 
-    # HELPER: Calculate width including spacing so we can center it
     def get_spaced_text_size(text, font, letter_spacing=0):
         bbox = draw.textbbox((0, 0), text, font=font)
         base_height = bbox[3] - bbox[1]
-        
         if letter_spacing == 0:
             return bbox[2] - bbox[0], base_height
-            
         total_width = 0
         for i, char in enumerate(text):
             try:
@@ -124,10 +172,8 @@ def generate_status_image(points, nights):
                 b = draw.textbbox((0,0), char, font=font)
                 w = b[2] - b[0]
             total_width += w
-            
         if len(text) > 1:
             total_width += (len(text) - 1) * letter_spacing
-            
         return total_width, base_height
 
     font_gold = load_local_font(FONT_FILENAME, 36 * SCALE_FACTOR)
@@ -138,28 +184,32 @@ def generate_status_image(points, nights):
     font_status_label = load_local_font(FONT_FILENAME, 10 * SCALE_FACTOR)
 
     # --- 3. DRAW TOP TEXT ---
-    
     current_y = 30 * SCALE_FACTOR  
 
-    # A. GOLD Text
-    gold_text = "GOLD"
-    gold_spacing = 3 * SCALE_FACTOR 
+    # A. TIER Text (Dynamic based on 'tier' variable)
+    tier_text = tier.upper()
+    tier_spacing = 3 * SCALE_FACTOR 
     
-    gold_w, gold_h = get_spaced_text_size(gold_text, font_gold, gold_spacing)
-    draw_bold_text(((WIDTH - gold_w) // 2, current_y), gold_text, font=font_gold, letter_spacing=gold_spacing)
+    gold_w, gold_h = get_spaced_text_size(tier_text, font_gold, tier_spacing)
+    draw_bold_text(((WIDTH - gold_w) // 2, current_y), tier_text, font=font_gold, letter_spacing=tier_spacing)
     
     current_y += 1.5*gold_h + (10 * SCALE_FACTOR) 
 
-    # B. Reward Points
-    points_text = f"{points:,} Reward Points"
+    # B. Reward Points (Dynamic 'reward_points' variable)
+    # Assuming reward_points input is a clean number/string. Formatting commas if it's an int.
+    try:
+        rp_formatted = f"{int(reward_points):,}"
+    except:
+        rp_formatted = str(reward_points)
+        
+    points_text = f"{rp_formatted} Reward Points"
     points_spacing = 1.5 * SCALE_FACTOR 
     points_w, points_h = get_spaced_text_size(points_text, font_points, 0)
     draw_bold_text(((WIDTH - points_w) // 2, current_y), points_text, font=font_points, letter_spacing=points_spacing)
     
     current_y += points_h + (10 * SCALE_FACTOR) 
 
-    # C. Discount
-    discount_val = math.floor(points / 75)
+    # C. Discount (Dynamic 'discount_val' variable)
     discount_text = f"or £{discount_val} discount on your next stay"
     discount_w, discount_h = get_spaced_text_size(discount_text, font_discount, 0)
     draw_bold_text(((WIDTH - discount_w) // 2, current_y), discount_text, font=font_discount, strength=0.5)
@@ -167,7 +217,6 @@ def generate_status_image(points, nights):
     current_y += 7*discount_h + (25 * SCALE_FACTOR) 
 
     # --- 4. ARC LAYOUT ---
-    
     RADIUS_OUTER = 200 * SCALE_FACTOR 
     RADIUS_INNER = 155 * SCALE_FACTOR 
     LINE_WIDTH = 24 * SCALE_FACTOR
@@ -175,7 +224,7 @@ def generate_status_image(points, nights):
     ARC_CENTER_X = WIDTH // 2
     ARC_CENTER_Y = current_y + RADIUS_OUTER 
     
-    # --- 5. DRAW ARCS ---
+    # --- 5. DRAW ARCS (Using 'status_points' and 'nights') ---
     TEAL_BG = (230, 242, 245)
     INDIGO_BG = (227, 230, 238)
     TEAL_FG = (45, 228, 216)
@@ -184,8 +233,16 @@ def generate_status_image(points, nights):
     draw_capped_arc(draw, ARC_CENTER_X, ARC_CENTER_Y, RADIUS_OUTER, 180, 0, LINE_WIDTH, TEAL_BG)
     draw_capped_arc(draw, ARC_CENTER_X, ARC_CENTER_Y, RADIUS_INNER, 180, 0, LINE_WIDTH, INDIGO_BG)
     
-    points_progress = min(1.0, max(0.0, points / MAX_POINTS))
-    nights_progress = min(1.0, max(0.0, nights / MAX_NIGHTS))
+    # Calculate progress
+    try:
+        sp_int = int(status_points)
+        n_int = int(nights)
+    except:
+        sp_int = 0
+        n_int = 0
+
+    points_progress = min(1.0, max(0.0, sp_int / MAX_POINTS))
+    nights_progress = min(1.0, max(0.0, n_int / MAX_NIGHTS))
     
     points_end_angle = 180 + (180 * points_progress)
     nights_end_angle = 180 + (180 * nights_progress)
@@ -195,11 +252,11 @@ def generate_status_image(points, nights):
     if nights_progress > 0:
         draw_capped_arc(draw, ARC_CENTER_X, ARC_CENTER_Y, RADIUS_INNER, 180, nights_end_angle, LINE_WIDTH, INDIGO_FG)
 
-    # --- 6. DRAW ICONS (with white background and golden border) ---
-    icon_size = 24 * SCALE_FACTOR # Original icon size
-    padded_icon_size = icon_size + (8 * SCALE_FACTOR) # Size of the white circle background
-    border_width = 2 * SCALE_FACTOR # Golden border thickness
-    GOLDEN_COLOR = (255, 215, 0, 255) # RGB for gold
+    # --- 6. DRAW ICONS ---
+    icon_size = 24 * SCALE_FACTOR 
+    padded_icon_size = icon_size + (8 * SCALE_FACTOR) 
+    border_width = 2 * SCALE_FACTOR 
+    GOLDEN_COLOR = (255, 215, 0, 255) 
 
     def paste_icon(icon_name, angle, radius, color_layer):
         base_icon = load_local_image(icon_name, (icon_size, icon_size))
@@ -228,18 +285,26 @@ def generate_status_image(points, nights):
     paste_icon("iconA.png", points_end_angle, RADIUS_OUTER, TEAL_FG)
     paste_icon("iconC.png", nights_end_angle, RADIUS_INNER, INDIGO_FG)
 
-    # --- 7. INTERNAL CONTENT (Text + Card) ---
+    # --- 7. INTERNAL CONTENT (Dynamic Text + Dynamic Card) ---
     
-    achieve_text = "To achieve Platinum Status"
+    # Determine assets based on Tier
+    next_tier_name, card_filename = get_tier_assets(tier)
+
+    achieve_text = f"To achieve {next_tier_name} Status"
     achieve_w, achieve_h = get_spaced_text_size(achieve_text, font_achieve, 0)
     
     achieve_y = ARC_CENTER_Y - (RADIUS_INNER * 0.60) 
     
     draw_bold_text(((WIDTH - achieve_w) // 2, achieve_y), achieve_text, font=font_achieve, strength=0.5)
 
-    # Card Image
-    card_img = load_local_image("card.png")
+    # Dynamic Card Image
+    # Note: Looks for card_silver.png, card_gold.png etc based on inputs
+    card_img = load_local_image(card_filename)
     
+    # Fallback to "card.png" if specific tier card not found
+    if not card_img and card_filename != "card.png":
+        card_img = load_local_image("card.png")
+
     card_bottom_y = 0
     
     if card_img:
@@ -249,14 +314,15 @@ def generate_status_image(points, nights):
         card_img = card_img.resize((card_target_width, card_target_height), resample=Image.LANCZOS)
         
         card_x = (WIDTH - card_target_width) // 2
-        card_y = achieve_y + achieve_h + (SCALE_FACTOR)
+        card_y = achieve_y + achieve_h + (15 * SCALE_FACTOR)
         
         img.paste(card_img, (card_x, int(card_y)), card_img)
         card_bottom_y = card_y + card_target_height
     else:
+        # Fallback spacing if no card loads
         card_bottom_y = achieve_y + achieve_h + (100 * SCALE_FACTOR)
 
-    # --- 8. BOTTOM STATS (With Icons and White Background) ---
+    # --- 8. BOTTOM STATS ---
     
     start_stats_y = card_bottom_y + (20 * SCALE_FACTOR)
     
@@ -264,32 +330,25 @@ def generate_status_image(points, nights):
     icon_gap = 8 * SCALE_FACTOR
     text_gap = 8 * SCALE_FACTOR
     
-    # Helper to create icon with white background
     def create_white_bg_icon(filename, size):
         base = load_local_image(filename, (size, size))
         if not base: return None
-        
         padding = 8 * SCALE_FACTOR
         bg_size = size + padding
         container = Image.new('RGBA', (bg_size, bg_size), (0,0,0,0))
         draw_bg = ImageDraw.Draw(container)
         draw_bg.ellipse([0,0,bg_size, bg_size], fill="white")
-        
         offset = padding // 2
         container.paste(base, (offset, offset), base)
         return container
 
-    # Load row icons with background
     icon_p_small = create_white_bg_icon("iconA.png", row_icon_size)
     icon_n_small = create_white_bg_icon("iconC.png", row_icon_size)
 
     def draw_stats_row(y_pos, data_text, label_text, icon_img):
-        """Draws a centered row containing [Icon] [Data] [Label]"""
-        # Calculate widths
         w_d, h_d = get_spaced_text_size(data_text, font_status_data, 0)
         w_l, h_l = get_spaced_text_size(label_text, font_status_label, 0)
         
-        # Use actual image dimensions if available (since we added padding)
         img_w = icon_img.width if icon_img else 0
         img_h = icon_img.height if icon_img else 0
         
@@ -299,37 +358,35 @@ def generate_status_image(points, nights):
             
         current_x = (WIDTH - total_width) // 2
 
-        # Calculate Baseline Offset for bottom alignment
         try:
             ascent_d, _ = font_status_data.getmetrics()
             ascent_l, _ = font_status_label.getmetrics()
             baseline_offset = ascent_d - ascent_l
         except AttributeError:
-            baseline_offset = h_d - h_l # Fallback
+            baseline_offset = h_d - h_l 
 
-        # 1. Draw Icon (Vertically centered with data_text)
         if icon_img:
-            # icon_y calculation uses the actual image height now
             icon_y = y_pos + (h_d // 2) - (img_h // 3)
             img.paste(icon_img, (int(current_x), int(icon_y)), icon_img)
             current_x += img_w + icon_gap
             
-        # 2. Draw Data (Anchor Point)
         draw_bold_text((current_x, y_pos), data_text, font=font_status_data, letter_spacing=points_spacing)
         current_x += w_d + text_gap
-        
-        # 3. Draw Label (Baseline Aligned)
         draw_bold_text((current_x, y_pos + baseline_offset), label_text, font=font_status_label, strength=0.5)
         
         return h_d
 
-    # Draw Points Row
-    p_data = f"{points:,}"
+    # Draw Points Row (Using 'status_points')
+    try:
+        p_data = f"{int(status_points):,}"
+    except:
+        p_data = str(status_points)
+
     p_label = f"/ {MAX_POINTS:,} Status points"
     row_h = draw_stats_row(start_stats_y, p_data, p_label, icon_p_small)
     
-    # Draw Nights Row (below points row)
-    n_y = start_stats_y + row_h + (15 * SCALE_FACTOR)
+    # Draw Nights Row (Using 'nights')
+    n_y = start_stats_y + 1.5*row_h + (10 * SCALE_FACTOR)
     n_data = f"{nights}"
     n_label = f"/ {MAX_NIGHTS} nights"
     draw_stats_row(n_y, n_data, n_label, icon_n_small)
@@ -344,11 +401,20 @@ def generate_status_image(points, nights):
 @app.route('/generate-progress-image', methods=['GET'])
 def serve_dynamic_image():
     try:
-        p = int(request.args.get('points', 0))
-        n = int(request.args.get('nights', 0))
-    except:
-        p, n = 0, 0
-    return send_file(generate_status_image(p, n), mimetype='image/png')
+        # Retrieve new parameters
+        tier = request.args.get('tier', 'Gold') # Default to Gold
+        reward_points = request.args.get('reward_points', '0')
+        discount = request.args.get('discount', '0')
+        status_points = request.args.get('status_points', '0')
+        nights = request.args.get('nights', '0')
+    except Exception as e:
+        print(f"Error parsing args: {e}")
+        tier, reward_points, discount, status_points, nights = 'Gold', 0, 0, 0, 0
+        
+    return send_file(
+        generate_status_image(tier, reward_points, discount, status_points, nights), 
+        mimetype='image/png'
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)
